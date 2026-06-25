@@ -1,0 +1,83 @@
+name: Bulk Embed Resolver
+
+on:
+  workflow_dispatch:
+    # Allows you to trigger this manually from the Actions tab
+  schedule:
+    - cron: "0 0 * * *" # Optional: Runs once a day automatically
+
+jobs:
+  bulk-resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # Increased timeout since processing 150+ IDs will take a moment
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify outbound IP is a proxy
+        run: |
+          python3 - << 'PYEOF'
+          import urllib.request, json, sys, random
+          
+          PROXIES = [
+              ("31.59.20.176",  6754),
+              ("31.56.127.193", 7684),
+              ("45.38.107.97",  6014),
+              ("38.154.203.95", 5863),
+              ("198.105.121.200", 6462),
+              ("64.137.96.74",  6641),
+              ("198.23.243.226", 6361),
+              ("38.154.185.97", 6370),
+              ("142.111.67.146", 5611),
+              ("191.96.254.138", 6185),
+          ]
+          PROXY_USER = "glsbcfvl"
+          PROXY_PASS = "336gxb0or4n9"
+
+          BLOCKED_PREFIXES = (
+              "4.148.","4.149.","4.150.","4.151.",
+              "20.","40.","52.",
+              "13.","18.","34.","35.",
+              "104.","172.",
+          )
+
+          host, port = random.choice(PROXIES)
+          proxy_url = f"http://{PROXY_USER}:{PROXY_PASS}@{host}:{port}"
+          opener = urllib.request.build_opener(
+              urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
+          )
+          opener.addheaders = [("User-Agent", "Mozilla/5.0")]
+
+          try:
+              with opener.open("https://api.ipify.org?format=json", timeout=10) as r:
+                  ip = json.loads(r.read())["ip"]
+          except Exception as e:
+              print(f"::error::Could not check outbound IP: {e}")
+              sys.exit(1)
+
+          print(f"Outbound IP via proxy: {ip}")
+          if any(ip.startswith(p) for p in BLOCKED_PREFIXES):
+              print(f"::error::IP {ip} looks like datacenter/GitHub IP. Aborting.")
+              sys.exit(1)
+
+          print(f"✅ IP {ip} is clean — proxy is active.")
+          PYEOF
+
+      - name: Run Bulk Resolver
+        run: |
+          # Runs the script. It looks for "tmdb movis ids.txt" by default.
+          python3 bulk_resolver.py --file "tmdb movis ids.txt" --output "results.json"
+
+      - name: Upload results artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bulk-resolver-results
+          path: results.json
+          retention-days: 7
